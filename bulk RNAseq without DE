@@ -1,0 +1,196 @@
+#set working directory first
+setwd('C:/Users/Jeffrey/OneDrive - Nanyang Technological University/PhD/Y1S1/rotation 2/GSE164771_Silva2021_bulk_normalized_counts.csv')
+
+#importing normalised bulk RNA counts, csv file contains Ensembl ID, gene ID, normalised counts for triplicates in OT, MB, HB
+#source for dataset: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE164771
+bulkrna <- read.csv("GSE164771_Silva2021_bulk_normalized_counts.csv")
+#importing required libraries
+library(edgeR)
+library(limma)
+library(Glimma)
+library(gplots)
+library(org.Mm.eg.db)
+library(RColorBrewer)
+
+#organising the dataset for analysis
+#firstly, create data frame for sample information for batch correction and colouring later on
+sampleinfo <- data.frame(samples=c("OT_1","OT_2","OT_3","MB_1","MB_2","MB_3","HB_1","HB_2","HB_3"),region=c("optic tectum","optic tectum","optic tectum","midbrain","midbrain","midbrain","hindbrain","hindbrain","hindbrain"),day=c("day1","day2","day3","day1","day2","day3","day1","day2","day3"),stringsAsFactors = TRUE)
+#removing gene IDs to create matrix for analysis (gene ID contains duplicates hence cannot be used)
+countdata <- bulkrna[,-(1:2)]
+rownames(countdata) <- bulkrna[,1]
+#creating list of gene IDs to map to ensembl ID later on
+gene_id <- bulkrna[,(1:2)]
+rownames(gene_id) <- gene_id[,1]
+
+#filtering of lowly expressed genes using edgeR cpm threshold >1 for at least 3 samples
+myCPM <- cpm(countdata)
+thresh <- myCPM > 1 #returns matrix of TRUE/FALSE
+table(rowSums(thresh)) #check how many TRUEs in each row
+keep <- rowSums(thresh) >= 3 #keep genes which are TRUE for at least 3 samples since 3 biological replicates
+counts.keep <- countdata[keep,]
+dim(counts.keep)
+
+#create a DGEList object in edgeR with filtered genes
+dgeObj <- DGEList(counts.keep)
+logcounts <- cpm(dgeObj, log=TRUE)#log2 transform the filtered genes
+#check distribution of samples
+boxplot(logcounts, xlab="", ylab="Log2 counts per million",las=2)
+abline(h=median(logcounts),col="blue")
+title("Boxplots of logCPMs")
+
+#conduct batch correction for logcounts
+logcounts <- calcNormFactors(logcounts, method="TMM")
+logcounts_bc <- removeBatchEffect(logcounts,batch=sampleinfo$day)
+#plotting PCA plot
+col.region <- c("purple","orange","green")[sampleinfo$region] #assign colors to region
+data.frame(sampleinfo$region, col.region)
+plotMDS(logcounts_bc,col=col.region,pch=16) #plots PCA
+legend("bottomright",fill=c("purple","orange","green"),legend=levels(sampleinfo$region),cex=0.8)
+
+#alternative: make interactive PCA plot with Glimma. Includes PCA and scree plot, can visualise PCA for different dimensions
+labels <- paste(sampleinfo$samples, sampleinfo$region)
+group <- paste(sampleinfo$region,sep=".")
+group <- factor(group)
+glMDSPlot(logcounts_bc, labels=labels, groups=group, folder="mds")
+
+#manual cleaning of data to remove duplicate gene names
+#reimport logcounts_bc with new gene names
+logcounts_bc <- read.csv("logcounts_bc_backup.csv")
+rownames(logcounts_bc) <- logcounts_bc[,11] #name rows as genes
+logcounts_bc <- logcounts_bc[,-(1)]
+logcounts_bc <- logcounts_bc[,-(10)]
+
+#differential gene expression analysis to compare OT vs MB (no raw counts lol)
+#extract DE analysis results
+library(xlsx)
+resOTvsMB <- read.xlsx("41467_2021_26206_MOESM7_ESM.xlsx", sheetIndex=3, header=TRUE)
+rownames(resOTvsMB) <- resOTvsMB[,2]
+resOTvsMB$log2FoldChange <- as.numeric(resOTvsMB$log2FoldChange)
+resOTvsMB$padj <- as.numeric(resOTvsMB$padj)
+#extracting genes with significant log2 fold changes
+library(dplyr)
+DE_genes1 <- resOTvsMB%>% filter(log2FoldChange>1|log2FoldChange< -1)
+write.csv(DE_genes1,"C:/Users/Jeffrey/OneDrive - Nanyang Technological University/PhD/Y1S1/rotation 2/GSE164771_Silva2021_bulk_normalized_counts.csv/DE_OTvsMB.csv")
+#plotting volcano plot OT vs MB
+library(EnhancedVolcano)
+EnhancedVolcano(resOTvsMB,
+                lab = rownames(resOTvsMB),
+                x = 'log2FoldChange',
+                y = 'padj',
+                FCcutoff=1,
+                ylim=c(0,50),
+                title = 'OT vs MB')
+
+#differential gene expression analysis to compare OT vs HB
+#extract DE analysis results
+resOTvsHB <- read.xlsx("41467_2021_26206_MOESM7_ESM.xlsx", sheetIndex=2, header=TRUE)
+rownames(resOTvsHB) <- resOTvsHB[,2]
+resOTvsHB$log2FoldChange <- as.numeric(resOTvsHB$log2FoldChange)
+resOTvsHB$padj <- as.numeric(resOTvsHB$padj)
+#extracting genes with significant log2 fold changes
+DE_genes2 <- resOTvsHB%>% filter(log2FoldChange>1|log2FoldChange< -1)
+write.csv(DE_genes2,"C:/Users/Jeffrey/OneDrive - Nanyang Technological University/PhD/Y1S1/rotation 2/GSE164771_Silva2021_bulk_normalized_counts.csv/DE_OTvsHB.csv")
+#plotting volcano plot OT vs HB
+EnhancedVolcano(resOTvsHB,
+                lab = rownames(resOTvsHB),
+                x = 'log2FoldChange',
+                y = 'padj',
+                FCcutoff=1,
+                ylim = c(0,50),
+                title = 'OT vs HB')
+
+#differential gene expression analysis to compare HB vs MB
+#extract DE analysis results
+resHBvsMB <- read.xlsx("41467_2021_26206_MOESM7_ESM.xlsx", sheetIndex=1, header=TRUE)
+rownames(resHBvsMB) <- resHBvsMB[,2]
+resHBvsMB$log2FoldChange <- as.numeric(resHBvsMB$log2FoldChange)
+resHBvsMB$padj <- as.numeric(resHBvsMB$padj)
+#extracting genes with significant log2 fold changes
+DE_genes3 <- resHBvsMB%>% filter(log2FoldChange>1|log2FoldChange< -1)
+write.csv(DE_genes1,"C:/Users/Jeffrey/OneDrive - Nanyang Technological University/PhD/Y1S1/rotation 2/GSE164771_Silva2021_bulk_normalized_counts.csv/DE_HBvsMB.csv")
+#plotting volcano plot MB vs HB
+EnhancedVolcano(resHBvsMB,
+                lab = rownames(resHBvsMB),
+                x = 'log2FoldChange',
+                y = 'padj',
+                FCcutoff=1,
+                ylim = c(0,30),
+                title = 'HB vs MB')
+#------------------------------------------------------------------------------------------------
+#plotting heatmaps for hierarchical clustering
+#heatmap for OT vs MB
+library(pheatmap)
+counts.keep$geneID <- gene_id[match(rownames(counts.keep),rownames(gene_id)),"Gene_ID"] #assign gene IDs to counts.keep to extract significant gene names
+OT_MB <- counts.keep[counts.keep$geneID %in% DE_genes1$Gene_ID,][,1:6] #extract normalised counts of significant genes
+scaled_OT_MB <- scale(OT_MB) #scaling counts
+heat_OT_MB<-pheatmap(scaled_OT_MB ,cluster_rows=TRUE, show_rownames=FALSE,cluster_cols=TRUE, 
+                        border_color = NA, scale = "row", main="Hierarchical clustering, OT vs MB", clustering_method='ward.D2') #plotting heatmap
+
+#heatmap for OT vs HB
+OT_HB <- counts.keep[counts.keep$geneID %in% DE_genes2$Gene_ID,][,c(1:3,7:9)] #extract normalised counts of significant genes
+scaled_OT_HB <- scale(OT_HB) #scaling counts
+heat_OT_HB<-pheatmap(scaled_OT_HB ,cluster_rows=TRUE, show_rownames=FALSE,cluster_cols=TRUE, 
+                     border_color = NA, scale = "row", main="Hierarchical clustering, OT vs HB", clustering_method='ward.D2') #plotting heatmap
+
+#heatmap for HB vs MB
+HB_MB <- counts.keep[counts.keep$geneID %in% DE_genes3$Gene_ID,][,4:9] #extract normalised counts of significant genes
+scaled_HB_MB <- scale(HB_MB) #scaling counts
+heat_HB_MB<-pheatmap(scaled_HB_MB ,cluster_rows=TRUE, show_rownames=FALSE,cluster_cols=TRUE, 
+                     border_color = NA, scale = "row", main="Hierarchical clustering, HB vs MB", clustering_method='ward.D2') #plotting heatmap
+#------------------------------------------------------------------------------------------------
+#functional enrichment analysis with fgsea
+#OT vs HB first
+library(fgsea)
+library(msigdbr)
+gsea_OT_HB <- filter(resOTvsHB, !is.na(Ensembl_ID)) #filter lines without ensembl ID
+ranks_OT_HB <- gsea_OT_HB$log2FoldChange
+names(ranks_OT_HB) <- gsea_OT_HB$Ensembl_ID
+barplot(sort(ranks_OT_HB,decreasing=T)) #visualise distribution of enrichment score?
+genesets <- msigdbr(species="Danio rerio")
+genesets <- genesets %>% filter(gs_cat %in% c("C2","C5","C8","H"))
+pathways_DR <- split(x=genesets$ensembl_gene, f=genesets$gs_name)
+fgseaRes_OT_HB <- fgsea(pathways_DR,ranks_OT_HB, minSize=15, maxSize=500,nperm=1000)
+fgseaRes_OT_HB <- fgseaRes_OT_HB %>% filter(pval<0.01)
+#reorganising data and plotting enrichment score
+library(tibble)
+library(tidyverse)
+library(ggplot2)
+fgseaResTidy_OT_HB <- fgseaRes_OT_HB %>% as_tibble() %>% arrange(desc(NES))
+fgseaResTidy_OT_HB %>% dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% arrange(pval) %>% DT::datatable()
+ggplot(fgseaResTidy_OT_HB, aes(reorder(pathway, NES),NES)) +
+       geom_col(aes(fill=pval<0.01)) +
+       coord_flip() +
+       labs(x="Pathway",y="Normalised Enrichment Score", title="Hallmark pathways, OT vs HB") +
+       theme_minimal()
+
+#OT vs MB
+gsea_OT_MB <- filter(resOTvsMB, !is.na(Ensembl_ID)) #filter lines without ensembl ID
+ranks_OT_MB <- gsea_OT_MB$log2FoldChange
+names(ranks_OT_MB) <- gsea_OT_MB$Ensembl_ID
+barplot(sort(ranks_OT_MB,decreasing=T)) #visualise distribution of enrichment score?
+fgseaRes_OT_MB <- fgsea(pathways_DR,ranks_OT_MB, minSize=15, maxSize=500,nperm=1000)
+fgseaRes_OT_MB <- fgseaRes_OT_MB %>% filter(pval<0.01)
+#reorganising data and plotting enrichment score
+fgseaResTidy_OT_MB <- fgseaRes_OT_MB %>% as_tibble() %>% arrange(desc(NES))
+fgseaResTidy_OT_MB %>% dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% arrange(pval) %>% DT::datatable()
+ggplot(fgseaResTidy_OT_MB, aes(reorder(pathway, NES),NES)) +
+  geom_col(aes(fill=pval<0.01)) +
+  coord_flip() +
+  labs(x="Pathway",y="Normalised Enrichment Score", title="Hallmark pathways, OT vs MB") +
+  theme_minimal()
+
+#HB vs MB
+gsea_HB_MB <- filter(resHBvsMB, !is.na(Ensembl_ID)) #filter lines without ensembl ID
+ranks_HB_MB <- gsea_HB_MB$log2FoldChange
+names(ranks_HB_MB) <- gsea_HB_MB$Ensembl_ID
+barplot(sort(ranks_HB_MB,decreasing=T)) #visualise distribution of enrichment score?
+fgseaRes_HB_MB <- fgsea(pathways_DR,ranks_HB_MB, minSize=15, maxSize=500,nperm=1000)
+fgseaRes_HB_MB <- fgseaRes_HB_MB %>% filter(pval<0.01)
+#reorganising data and plotting enrichment score
+fgseaResTidy_HB_MB <- fgseaRes_HB_MB %>% as_tibble() %>% arrange(desc(NES))
+fgseaResTidy_HB_MB %>% dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% arrange(pval) %>% DT::datatable()
+ggplot(fgseaResTidy_HB_MB, aes(reorder(pathway, NES),NES)) +
+  geom_col(aes(fill=pval<0.01)) +
+  coord_flip() +
+  labs(x="Pathway",y="Normalised Enrichment Score", title="Hallmark pathways, HB vs MB") +
+  theme_minimal()
